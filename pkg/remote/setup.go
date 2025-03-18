@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"time"
@@ -38,21 +37,29 @@ func Setup(host *ssh.Client) error {
 	return err
 }
 
-func StartServer(host *ssh.Client) error {
-	//command := `sudo linuxptp.ptp4l -i eth0 --step_threshold=1 --hwts_filter full --serverOnly 1 -m -f /snap/linuxptp/current/etc/default.cfg`
-	//executeAsync(host, command)
-	return nil
-	// Need to return a handle to this process, to stop it later
+func StartServer(host *ssh.Client) (*ssh.Session, *string, *string, error) {
+	command := `sudo linuxptp.ptp4l -i eth0 --step_threshold=1 --hwts_filter full --serverOnly 1 -m -f /snap/linuxptp/current/etc/default.cfg`
+	var stdoutBuffer string
+	var stderrBuffer string
+	session, err := executeAsync(host, command, &stdoutBuffer, &stderrBuffer)
+	return session, &stdoutBuffer, &stderrBuffer, err
 }
 
-func StartClient(host *ssh.Client) error {
-	// sudo linuxptp.ptp4l -i eth0 --step_threshold=1 --hwts_filter full --clientOnly 1 -m -f /snap/linuxptp/current/etc/default.cfg
-	return nil
+func StartClient(host *ssh.Client) (*ssh.Session, *string, *string, error) {
+	command := `sudo linuxptp.ptp4l -i eth0 --step_threshold=1 --hwts_filter full --clientOnly 1 -m -f /snap/linuxptp/current/etc/default.cfg`
+	var stdoutBuffer string
+	var stderrBuffer string
+	session, err := executeAsync(host, command, &stdoutBuffer, &stderrBuffer)
+	return session, &stdoutBuffer, &stderrBuffer, err
+}
+
+func Stop(session *ssh.Session) {
+	closeAsync(session)
 }
 
 func execute(host *ssh.Client, command string) (string, string, error) {
 
-	log.Printf("[exec-ssh] %s", command)
+	fmt.Printf("[exec-wait] %s\n", command)
 
 	// Set sudo to read the password from stdin
 	if strings.HasPrefix(command, "sudo ") {
@@ -84,7 +91,7 @@ func execute(host *ssh.Client, command string) (string, string, error) {
 		return "", "", fmt.Errorf("failed to create stderr pipe: %v", err)
 	}
 
-	var stderrBuffer []byte
+	var stderrBuffer string
 	go enterSudoPassword(stdin, stderr, &stderrBuffer)
 
 	if err := session.Start(command); err != nil {
@@ -103,9 +110,71 @@ func execute(host *ssh.Client, command string) (string, string, error) {
 	return string(stdoutBuffer), string(stderrBuffer), nil
 }
 
+func executeAsync(host *ssh.Client, command string, stdoutBuffer *string, stderrBuffer *string) (*ssh.Session, error) {
+	fmt.Printf("[exec-async] %s\n", command)
+
+	// Set sudo to read the password from stdin
+	if strings.HasPrefix(command, "sudo ") {
+		command = strings.TrimPrefix(command, "sudo ")
+		command = fmt.Sprintf(`sudo -S %s`, command)
+	}
+
+	if host == nil {
+		return nil, fmt.Errorf("SSH client not initialized. Please connect to remote device first")
+	}
+
+	session, err := host.NewSession()
+	if err != nil {
+		return session, fmt.Errorf("failed to create session: %v", err)
+	}
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return session, fmt.Errorf("failed to create stdin pipe: %v", err)
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return session, fmt.Errorf("failed to create stdout pipe: %v", err)
+	}
+
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		return session, fmt.Errorf("failed to create stderr pipe: %v", err)
+	}
+
+	go enterSudoPassword(stdin, stderr, stderrBuffer)
+	go copyReaderToBuffer(stdout, stdoutBuffer)
+
+	if err := session.Start(command); err != nil {
+		return session, fmt.Errorf("failed to start session with command '%s': %v", command, err)
+	}
+
+	return session, nil
+}
+
+func closeAsync(session *ssh.Session) {
+	err := session.Signal(ssh.SIGTERM)
+	if err != nil {
+		fmt.Printf("failed to send SIGTERM: %v", err)
+	}
+	err = session.Signal(ssh.SIGKILL)
+	if err != nil {
+		fmt.Printf("failed to send SIGTERM: %v", err)
+	}
+	//err = session.Wait()
+	//if err != nil {
+	//	fmt.Printf("failed to wait: %v", err)
+	//}
+	err = session.Close()
+	if err != nil {
+		fmt.Printf("failed to close session: %v", err)
+	}
+}
+
 // Monitor stderr for the sudo password request, and only pipe it in when it is requested
 // https://stackoverflow.com/a/44501303
-func enterSudoPassword(in io.WriteCloser, out io.Reader, output *[]byte) {
+func enterSudoPassword(in io.WriteCloser, out io.Reader, output *string) {
 	var (
 		line string
 		r    = bufio.NewReader(out)
@@ -116,7 +185,7 @@ func enterSudoPassword(in io.WriteCloser, out io.Reader, output *[]byte) {
 			break
 		}
 
-		*output = append(*output, b)
+		*output = *output + string(b)
 
 		if b == byte('\n') {
 			line = ""
@@ -126,14 +195,45 @@ func enterSudoPassword(in io.WriteCloser, out io.Reader, output *[]byte) {
 		line += string(b)
 
 		if strings.HasPrefix(line, "[sudo] password for ") && strings.HasSuffix(line, ": ") {
-			log.Printf("Remote requested sudo passwword. Entering.")
+			fmt.Printf("Remote requested sudo password. Entering.\n")
 			_, err = in.Write([]byte(os.Getenv("REMOTE_PASSWORD") + "\n"))
 			if err != nil {
 				break
 			}
-
-			// Append newline to stderr, as that is how it looks in a teminal normally
-			*output = append(*output, '\n')
 		}
 	}
+}
+
+func copyReaderToBuffer(in io.Reader, out *string) {
+	var (
+		//line string
+		r = bufio.NewReader(in)
+	)
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			break
+		}
+
+		*out = *out + string(b)
+
+		//if b == byte('\n') {
+		//	fmt.Println(line)
+		//	line = ""
+		//	continue
+		//}
+		//
+		//line += string(b)
+	}
+}
+
+func WaitFor(buffer *string, search string, timeout time.Duration) error {
+	start := time.Now()
+
+	for time.Now().Before(start.Add(timeout)) {
+		if strings.Contains(*buffer, search) {
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
 }
