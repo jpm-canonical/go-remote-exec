@@ -48,13 +48,12 @@ func getRemote() execute.Target {
 		log.Fatal(err)
 	}
 
-	return remote
+	return &remote
 }
 
 func getLocal() execute.Target {
 	local := execute.Local{
 		Environment: map[string]string{"FOO": "BAR"},
 	}
-	return local
-
+	return &local
 }
