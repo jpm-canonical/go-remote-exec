@@ -18,6 +18,7 @@ func TestPtp4l(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		t.Log("Closing host A")
 		hostA.Close()
 	})
 
@@ -26,6 +27,7 @@ func TestPtp4l(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		t.Log("Closing host B")
 		hostB.Close()
 	})
 
@@ -45,7 +47,10 @@ func TestPtp4l(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer remote.Stop(server)
+	t.Cleanup(func() {
+		t.Log("Closing server")
+		remote.Stop(server)
+	})
 
 	err = remote.WaitFor(serverStdOut, "assuming the grand master role", 20*time.Second)
 	t.Log(*serverStdOut)
@@ -60,7 +65,10 @@ func TestPtp4l(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer remote.Stop(client)
+	t.Cleanup(func() {
+		t.Log("Closing client")
+		remote.Stop(client)
+	})
 
 	err = remote.WaitFor(clientStdOut, "INITIALIZING to LISTENING on INIT_COMPLETE", 20*time.Second)
 	if err != nil {
@@ -82,7 +90,8 @@ func TestPtp4l(t *testing.T) {
 			fields := strings.Fields(before)
 			if fields[1] == "master" && fields[2] == "offset" {
 				foundSyncMessage = true
-				log.Printf("Synchronising!! Offset %s", fields[3])
+				log.Printf("Synchronising. Offset %snS", fields[3])
+				break
 			}
 		}
 	}

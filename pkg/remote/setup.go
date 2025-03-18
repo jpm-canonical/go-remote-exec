@@ -156,20 +156,28 @@ func executeAsync(host *ssh.Client, command string, stdoutBuffer *string, stderr
 func closeAsync(session *ssh.Session) {
 	err := session.Signal(ssh.SIGTERM)
 	if err != nil {
-		fmt.Printf("failed to send SIGTERM: %v", err)
+		fmt.Printf("failed to send SIGTERM: %v\n", err)
 	}
+	time.Sleep(1 * time.Second) // Delay is required otherwise the client becomes an orphaned process
+
+	// If sigterm succeeded, kill and session close will fail
 	err = session.Signal(ssh.SIGKILL)
 	if err != nil {
-		fmt.Printf("failed to send SIGTERM: %v", err)
+		if err.Error() == "EOF" {
+			// expected error
+		} else {
+			fmt.Printf("failed to send SIGKILL: %v\n", err)
+		}
 	}
-	//err = session.Wait()
-	//if err != nil {
-	//	fmt.Printf("failed to wait: %v", err)
-	//}
 	err = session.Close()
 	if err != nil {
-		fmt.Printf("failed to close session: %v", err)
+		if err.Error() == "EOF" {
+			// expected error
+		} else {
+			fmt.Printf("failed to close session: %v\n", err)
+		}
 	}
+	time.Sleep(1 * time.Second) // Delay is required otherwise the client becomes an orphaned process
 }
 
 // Monitor stderr for the sudo password request, and only pipe it in when it is requested
@@ -206,7 +214,6 @@ func enterSudoPassword(in io.WriteCloser, out io.Reader, output *string) {
 
 func copyReaderToBuffer(in io.Reader, out *string) {
 	var (
-		//line string
 		r = bufio.NewReader(in)
 	)
 	for {
@@ -216,14 +223,6 @@ func copyReaderToBuffer(in io.Reader, out *string) {
 		}
 
 		*out = *out + string(b)
-
-		//if b == byte('\n') {
-		//	fmt.Println(line)
-		//	line = ""
-		//	continue
-		//}
-		//
-		//line += string(b)
 	}
 }
 
