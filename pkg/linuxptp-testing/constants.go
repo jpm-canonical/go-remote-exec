@@ -1,4 +1,4 @@
-package remote
+package linuxptp_testing
 
 const (
 	PtpSyncThreshold = 100
@@ -39,17 +39,3 @@ Ptp4lSnapSpecific contains ptp4l command line arguments for snaps.
 - UDS paths. The snap needs to create Unix domain sockets under /run/snap.linuxptp/
 */
 var Ptp4lSnapSpecific = []string{UdsAddress, Ptp4lUdsSnap, UdsRoAddress, Ptp4lUdsRoSnap}
-
-type InstallType string
-
-const (
-	Deb  InstallType = "deb"
-	Snap InstallType = "snap"
-)
-
-type SystemType string
-
-const (
-	Rpi5    SystemType = "rpi5"
-	Generic SystemType = "generic"
-)

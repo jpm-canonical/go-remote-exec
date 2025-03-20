@@ -1,4 +1,4 @@
-package remote
+package remote_exec
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func Connect(t *testing.T, hostName string, username string, password string) *ssh.Client {
+func Connect(t *testing.T, tag string, hostName string, username string, password string) *ssh.Client {
 	config := &ssh.ClientConfig{
 		User: username,
 		Auth: []ssh.AuthMethod{
@@ -19,11 +19,11 @@ func Connect(t *testing.T, hostName string, username string, password string) *s
 
 	sshClient, err := ssh.Dial("tcp", hostName+":22", config)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s | %v", tag, err)
 	}
 
 	t.Cleanup(func() {
-		t.Logf("Disconnecting %s", hostName)
+		t.Logf("%s | Disconnecting %s", tag, hostName)
 		sshClient.Close()
 	})
 

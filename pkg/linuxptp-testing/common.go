@@ -1,74 +1,67 @@
-package ptp4l_tests
+package linuxptp_testing
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"go-remote-exec/pkg/remote"
+	remote "go-remote-exec/pkg/remote-exec"
+	"golang.org/x/crypto/ssh"
 )
 
-type TestSetup struct {
-	Server HostSetup
-	Client HostSetup
+func InstallSnap(t *testing.T, tag string, host *ssh.Client) {
+	command := []string{"sudo", "snap", "install", "linuxptp", "--beta"}
+	stdout, stderr := remote.Execute(t, tag, host, command)
+	fmt.Printf("===stdout===\n%s============\n", stdout)
+	fmt.Printf("===stderr===\n%s============\n", stderr)
 }
 
-type HostSetup struct {
-	Hostname    string
-	Username    string
-	Password    string
-	InstallType remote.InstallType
-	SystemType  remote.SystemType
-	Interface   string
-	ConfigFile  string
-
-	StartedSubstring          string
-	RequireSyncBelowThreshold bool
-}
-
-func runTest(t *testing.T, testSetup TestSetup) {
+func RunTest(t *testing.T, testSetup TestSetup) {
 
 	startServer(t, testSetup)
 
-	client := remote.Connect(t, testSetup.Client.Hostname, testSetup.Client.Username, testSetup.Client.Password)
-	clientConfigPath := remote.GetConfigDirectory(t, testSetup.Client.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
-	remote.CopyFile(t, testSetup.Client.ConfigFile, clientConfigPath, client)
+	tag := "client"
 
-	application := remote.Ptp4l
+	client := remote.Connect(t, tag, testSetup.Client.Hostname, testSetup.Client.Username, testSetup.Client.Password)
+
+	t.Log("# Copying config to client")
+	clientConfigPath := GetConfigDirectory(t, testSetup.Client.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
+	remote.CopyFile(t, tag, testSetup.Client.ConfigFile, clientConfigPath, client)
+
+	application := Ptp4l
 	if testSetup.Client.InstallType == remote.Snap {
-		application = remote.Ptp4lSnap
+		application = Ptp4lSnap
 	}
 	clientCommand := []string{
 		"sudo", application,
-		remote.Interface, testSetup.Client.Interface,
-		remote.Verbose, "1",
-		remote.UseSyslog, "0",
-		remote.StepThreshold, "1", // include this to allow quicker syncs by stepping clock
-		remote.ConfigFile, clientConfigPath,
+		Interface, testSetup.Client.Interface,
+		Verbose, "1",
+		UseSyslog, "0",
+		StepThreshold, "1", // include this to allow quicker syncs by stepping clock
+		ConfigFile, clientConfigPath,
 	}
-	clientCommand = append(clientCommand, remote.ClientOnly, "1")
+	clientCommand = append(clientCommand, ClientOnly, "1")
 
 	// Append Rpi5 specific arguments
 	if testSetup.Client.SystemType == remote.Rpi5 {
-		clientCommand = append(clientCommand, remote.Ptp4lRpi5Specific...)
+		clientCommand = append(clientCommand, Ptp4lRpi5Specific...)
 	}
 
 	// Append Snap specific arguments
 	if testSetup.Client.InstallType == remote.Snap {
-		clientCommand = append(clientCommand, remote.Ptp4lSnapSpecific...)
+		clientCommand = append(clientCommand, Ptp4lSnapSpecific...)
 
 		// Also make sure the directory exists
-		remote.CreatePtp4lSnapUds(t, client)
+		CreatePtp4lSnapUds(t, client)
 	}
 
 	t.Log("# Starting client")
 	var clientStdOut string
 	var clientStdErr string
-	runningPtr := remote.ExecuteAsync(t, client, clientCommand, &clientStdOut, &clientStdErr)
+	runningPtr := remote.ExecuteAsync(t, tag, client, clientCommand, &clientStdOut, &clientStdErr)
 
 	found := remote.WaitFor(runningPtr, &clientStdOut, testSetup.Client.StartedSubstring, 20*time.Second)
 	if !found {
@@ -79,13 +72,14 @@ func runTest(t *testing.T, testSetup TestSetup) {
 	t.Log("# Client started")
 
 	// Watch client logs for synchronisation with server
-	clientSynchronised := false
+	clientSynchronising := false
+	clientSyncBelowThres := false
 	syncRepeats := 0
 
 	clientStdOutCopy := ""
 	period := 30 * time.Second
 	endTime := time.Now().Add(period)
-	log.Printf("# Waiting for sync, until %s", endTime)
+	t.Logf("# Waiting for sync, until %s", endTime)
 
 	// Monitor Client's stdout, split into lines, and check for sync message
 	for time.Now().Before(endTime) {
@@ -105,12 +99,12 @@ func runTest(t *testing.T, testSetup TestSetup) {
 					if err != nil {
 						t.Log(err)
 					} else {
-						if math.Abs(float64(masterOffset)) < remote.PtpSyncThreshold {
+						if math.Abs(float64(masterOffset)) < PtpSyncThreshold {
 							syncRepeats++
 
-							if syncRepeats >= remote.PtpSyncRepeats {
+							if syncRepeats >= PtpSyncRepeats {
 								t.Logf("# Client synchronised. Master Offset %snS", fields[3])
-								clientSynchronised = true
+								clientSyncBelowThres = true
 								break
 							}
 						} else {
@@ -119,7 +113,7 @@ func runTest(t *testing.T, testSetup TestSetup) {
 					}
 				} else {
 					t.Logf("# Client synchronising. Master Offset %snS", fields[3])
-					clientSynchronised = true
+					clientSynchronising = true
 					break
 				}
 			}
@@ -134,12 +128,12 @@ func runTest(t *testing.T, testSetup TestSetup) {
 					if err != nil {
 						t.Log(err)
 					} else {
-						if math.Abs(float64(rmsOffset)) < remote.PtpSyncThreshold {
+						if math.Abs(float64(rmsOffset)) < PtpSyncThreshold {
 							syncRepeats++
 
-							if syncRepeats >= remote.PtpSyncRepeats {
+							if syncRepeats >= PtpSyncRepeats {
 								t.Logf("# Client synchronised. RMS Offset %snS", fields[2])
-								clientSynchronised = true
+								clientSyncBelowThres = true
 								break
 							}
 						} else {
@@ -148,14 +142,15 @@ func runTest(t *testing.T, testSetup TestSetup) {
 					}
 				} else {
 					t.Logf("# Client synchronising. RMS Offset %snS", fields[2])
-					clientSynchronised = true
+					clientSynchronising = true
 					break
 				}
 			}
 		}
 	}
 
-	if !clientSynchronised {
+	if (testSetup.Client.RequireSyncBelowThreshold && !clientSyncBelowThres) ||
+		(!testSetup.Client.RequireSyncBelowThreshold && !clientSynchronising) {
 		t.Log(clientStdOutCopy)
 		t.Log(clientStdErr)
 		t.Fatal("# Synchronisation failed!")
@@ -163,44 +158,47 @@ func runTest(t *testing.T, testSetup TestSetup) {
 }
 
 func startServer(t *testing.T, testSetup TestSetup) {
+	tag := "server"
 
 	// Connect to two remote devices
-	server := remote.Connect(t, testSetup.Server.Hostname, testSetup.Server.Username, testSetup.Server.Password)
-	// Use a unique name for the test config file
-	serverConfigPath := remote.GetConfigDirectory(t, testSetup.Server.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
-	// Copy config file to both machines
-	remote.CopyFile(t, testSetup.Server.ConfigFile, serverConfigPath, server)
+	server := remote.Connect(t, tag, testSetup.Server.Hostname, testSetup.Server.Username, testSetup.Server.Password)
 
-	application := remote.Ptp4l
+	t.Log("# Copying config to server")
+	// Use a unique name for the test config file
+	serverConfigPath := GetConfigDirectory(t, testSetup.Server.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
+	// Copy config file to both machines
+	remote.CopyFile(t, tag, testSetup.Server.ConfigFile, serverConfigPath, server)
+
+	application := Ptp4l
 	if testSetup.Server.InstallType == remote.Snap {
-		application = remote.Ptp4lSnap
+		application = Ptp4lSnap
 	}
 	serverCommand := []string{
 		"sudo", application,
-		remote.Interface, testSetup.Server.Interface,
-		remote.Verbose, "1",
-		remote.UseSyslog, "0",
-		remote.ConfigFile, serverConfigPath,
+		Interface, testSetup.Server.Interface,
+		Verbose, "1",
+		UseSyslog, "0",
+		ConfigFile, serverConfigPath,
 	}
-	serverCommand = append(serverCommand, remote.ServerOnly, "1")
+	serverCommand = append(serverCommand, ServerOnly, "1")
 
 	// Append Rpi5 specific arguments
 	if testSetup.Server.SystemType == remote.Rpi5 {
-		serverCommand = append(serverCommand, remote.Ptp4lRpi5Specific...)
+		serverCommand = append(serverCommand, Ptp4lRpi5Specific...)
 	}
 
 	// Append Snap specific arguments
 	if testSetup.Server.InstallType == remote.Snap {
-		serverCommand = append(serverCommand, remote.Ptp4lSnapSpecific...)
+		serverCommand = append(serverCommand, Ptp4lSnapSpecific...)
 
 		// Also make sure the directory exists
-		remote.CreatePtp4lSnapUds(t, server)
+		CreatePtp4lSnapUds(t, server)
 	}
 
 	t.Log("# Starting server")
 	var serverStdOut string
 	var serverStdErr string
-	runningPtr := remote.ExecuteAsync(t, server, serverCommand, &serverStdOut, &serverStdErr)
+	runningPtr := remote.ExecuteAsync(t, tag, server, serverCommand, &serverStdOut, &serverStdErr)
 
 	found := remote.WaitFor(runningPtr, &serverStdOut, testSetup.Server.StartedSubstring, 20*time.Second)
 	if !found {

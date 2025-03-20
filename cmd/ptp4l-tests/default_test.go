@@ -4,7 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"go-remote-exec/pkg/remote"
+	linuxptp "go-remote-exec/pkg/linuxptp-testing"
+	remote "go-remote-exec/pkg/remote-exec"
 )
 
 func TestDefault(t *testing.T) {
@@ -13,8 +14,8 @@ func TestDefault(t *testing.T) {
 		t.Fatal("REMOTE_PASSWORD environment variable not set")
 	}
 
-	testSetup := TestSetup{
-		Server: HostSetup{
+	testSetup := linuxptp.TestSetup{
+		Server: linuxptp.HostSetup{
 			Hostname:    "raspi-a.lan",
 			Username:    "jpmeijers",
 			Password:    os.Getenv("REMOTE_PASSWORD"),
@@ -25,7 +26,7 @@ func TestDefault(t *testing.T) {
 
 			StartedSubstring: "assuming the grand master role",
 		},
-		Client: HostSetup{
+		Client: linuxptp.HostSetup{
 			Hostname:    "raspi-b.lan",
 			Username:    "jpmeijers",
 			Password:    os.Getenv("REMOTE_PASSWORD"),
@@ -38,5 +39,5 @@ func TestDefault(t *testing.T) {
 			RequireSyncBelowThreshold: true,
 		},
 	}
-	runTest(t, testSetup)
+	linuxptp.RunTest(t, testSetup)
 }

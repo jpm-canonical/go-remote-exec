@@ -1,4 +1,4 @@
-package remote
+package remote_exec
 
 import (
 	"bufio"
@@ -13,11 +13,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func Execute(t *testing.T, host *ssh.Client, commandArgs []string) (string, string) {
+func Execute(t *testing.T, tag string, host *ssh.Client, commandArgs []string) (string, string) {
 
 	command := strings.Join(commandArgs, " ")
 
-	t.Logf("[exec-block] %s\n", command)
+	t.Logf("%s [exec-block] | %s\n", tag, command)
 
 	// Set sudo to read the password from stdin
 	if strings.HasPrefix(command, "sudo ") {
@@ -26,56 +26,53 @@ func Execute(t *testing.T, host *ssh.Client, commandArgs []string) (string, stri
 	}
 
 	if host == nil {
-		t.Fatal("SSH client not initialized. Please connect to remote device first")
+		t.Fatalf("%s | SSH client not initialized. Please connect to remote device first", tag)
 	}
 
 	session, err := host.NewSession()
 	if err != nil {
-		t.Fatalf("failed to create session: %v", err)
+		t.Fatalf("%s | failed to create session: %v", tag, err)
 	}
 
 	stdin, err := session.StdinPipe()
 	if err != nil {
-		t.Fatalf("failed to create stdin pipe: %v", err)
+		t.Fatalf("%s | failed to create stdin pipe: %v", tag, err)
 	}
 
 	stdout, err := session.StdoutPipe()
 	if err != nil {
-		t.Fatalf("failed to create stdout pipe: %v", err)
+		t.Fatalf("%s | failed to create stdout pipe: %v", tag, err)
 	}
 
 	stderr, err := session.StderrPipe()
 	if err != nil {
-		t.Fatalf("failed to create stderr pipe: %v", err)
+		t.Fatalf("%s | failed to create stderr pipe: %v", tag, err)
 	}
 
+	var stdoutBuffer string
 	var stderrBuffer string
-	go enterSudoPassword(t, stdin, stderr, &stderrBuffer)
+	go enterSudoPassword(t, tag, stdin, stderr, &stderrBuffer)
+	go copyReaderToBuffer(t, tag, stdout, &stdoutBuffer)
 
 	if err := session.Start(command); err != nil {
-		t.Fatalf("failed to start session with command '%s': %v", command, err)
-	}
-
-	stdoutBuffer, err := io.ReadAll(stdout)
-	if err != nil {
-		t.Fatalf("failed to read command output: %v", err)
+		t.Fatalf("%s | failed to start session with command '%s': %v", tag, command, err)
 	}
 
 	if err := session.Wait(); err != nil {
-		t.Fatalf("command '%s' failed: %v\n%s", command, err, stderrBuffer)
+		t.Fatalf("%s | command '%s' failed: %v\n%s", tag, command, err, stderrBuffer)
 	}
 
-	return string(stdoutBuffer), stderrBuffer
+	return stdoutBuffer, stderrBuffer
 }
 
 // ExecuteAsync starts a command on the remote host.
 // stdout and stderr are copied to the strings pointed to by the passed in pointers
 // A boolean pointer is returned, of which the value indicates if the process is still running
-func ExecuteAsync(t *testing.T, host *ssh.Client, commandArgs []string, stdoutBuffer *string, stderrBuffer *string) *bool {
+func ExecuteAsync(t *testing.T, tag string, host *ssh.Client, commandArgs []string, stdoutBuffer *string, stderrBuffer *string) *bool {
 
 	command := strings.Join(commandArgs, " ")
 
-	t.Logf("[exec-async] %s\n", command)
+	t.Logf("%s [exec-async] | %s\n", tag, command)
 
 	// Set sudo to read the password from stdin
 	if strings.HasPrefix(command, "sudo ") {
@@ -84,63 +81,63 @@ func ExecuteAsync(t *testing.T, host *ssh.Client, commandArgs []string, stdoutBu
 	}
 
 	if host == nil {
-		t.Fatalf("SSH client not initialized. Please connect to remote device first")
+		t.Fatalf("%s | SSH client not initialized. Please connect to remote device first", tag)
 	}
 
 	session, err := host.NewSession()
 	if err != nil {
-		t.Fatalf("failed to create session: %v", err)
+		t.Fatalf("%s | failed to create session: %v", tag, err)
 	}
 
 	stdin, err := session.StdinPipe()
 	if err != nil {
-		t.Fatalf("failed to create stdin pipe: %v", err)
+		t.Fatalf("%s | failed to create stdin pipe: %v", tag, err)
 	}
 
 	stdout, err := session.StdoutPipe()
 	if err != nil {
-		t.Fatalf("failed to create stdout pipe: %v", err)
+		t.Fatalf("%s | failed to create stdout pipe: %v", tag, err)
 	}
 
 	stderr, err := session.StderrPipe()
 	if err != nil {
-		t.Fatalf("failed to create stderr pipe: %v", err)
+		t.Fatalf("%s | failed to create stderr pipe: %v", tag, err)
 	}
 
-	go enterSudoPassword(t, stdin, stderr, stderrBuffer)
-	go copyReaderToBuffer(t, stdout, stdoutBuffer)
+	go enterSudoPassword(t, tag, stdin, stderr, stderrBuffer)
+	go copyReaderToBuffer(t, tag, stdout, stdoutBuffer)
 
 	if err := session.Start(command); err != nil {
-		t.Fatalf("failed to start session with command '%s': %v", command, err)
+		t.Fatalf("%s | failed to start session with command '%s': %v", tag, command, err)
 	}
 
 	// Do a session.Wait() and monitor the exit code
 	running := true
-	go monitorAsyncSession(t, session, &running)
+	go monitorAsyncSession(t, tag, session, &running)
 
 	t.Cleanup(func() {
-		closeAsync(t, session)
+		closeAsync(t, tag, session)
 	})
 
 	return &running
 }
 
-func monitorAsyncSession(t *testing.T, session *ssh.Session, running *bool) {
+func monitorAsyncSession(t *testing.T, tag string, session *ssh.Session, running *bool) {
 	err := session.Wait()
 	if err != nil {
 		*running = false
 		if errors.Is(err, &ssh.ExitMissingError{}) {
-			t.Fatal("session exited without an exit code")
+			t.Fatalf("%s | session exited without an exit code", tag)
 		} else {
-			t.Fatal(err)
+			t.Fatalf("%s | %v", tag, err)
 		}
 	}
 }
 
-func closeAsync(t *testing.T, session *ssh.Session) {
+func closeAsync(t *testing.T, tag string, session *ssh.Session) {
 	err := session.Signal(ssh.SIGTERM)
 	if err != nil {
-		t.Logf("Failed to send SIGTERM: %v\n", err)
+		t.Logf("%s | Failed to send SIGTERM: %v\n", tag, err)
 	}
 	time.Sleep(1 * time.Second) // Delay is required otherwise the client becomes an orphaned process
 
@@ -150,7 +147,7 @@ func closeAsync(t *testing.T, session *ssh.Session) {
 		if err.Error() == "EOF" {
 			// expected error
 		} else {
-			t.Logf("Failed to send SIGKILL: %v\n", err)
+			t.Logf("%s | Failed to send SIGKILL: %v\n", tag, err)
 		}
 	}
 	err = session.Close()
@@ -158,7 +155,7 @@ func closeAsync(t *testing.T, session *ssh.Session) {
 		if err.Error() == "EOF" {
 			// expected error
 		} else {
-			t.Logf("failed to close session: %v\n", err)
+			t.Logf("%s | failed to close session: %v\n", tag, err)
 		}
 	}
 	time.Sleep(1 * time.Second) // Delay is required otherwise the client becomes an orphaned process
@@ -166,7 +163,7 @@ func closeAsync(t *testing.T, session *ssh.Session) {
 
 // Monitor stderr for the sudo password request, and only pipe it in when it is requested
 // https://stackoverflow.com/a/44501303
-func enterSudoPassword(t *testing.T, in io.WriteCloser, out io.Reader, output *string) {
+func enterSudoPassword(t *testing.T, tag string, in io.WriteCloser, out io.Reader, output *string) {
 	var (
 		line string
 		r    = bufio.NewReader(out)
@@ -180,7 +177,7 @@ func enterSudoPassword(t *testing.T, in io.WriteCloser, out io.Reader, output *s
 		*output = *output + string(b)
 
 		if b == byte('\n') {
-			t.Logf("STDERR | %s", line)
+			t.Logf("%s STDERR | %s", tag, line)
 			line = ""
 			continue
 		}
@@ -188,7 +185,7 @@ func enterSudoPassword(t *testing.T, in io.WriteCloser, out io.Reader, output *s
 		line += string(b)
 
 		if strings.HasPrefix(line, "[sudo] password for ") && strings.HasSuffix(line, ": ") {
-			t.Logf("Remote requested sudo password. Entering.\n")
+			t.Logf("%s | Remote requested sudo password. Entering.\n", tag)
 			_, err = in.Write([]byte(os.Getenv("REMOTE_PASSWORD") + "\n"))
 			if err != nil {
 				break
@@ -197,7 +194,7 @@ func enterSudoPassword(t *testing.T, in io.WriteCloser, out io.Reader, output *s
 	}
 }
 
-func copyReaderToBuffer(t *testing.T, in io.Reader, out *string) {
+func copyReaderToBuffer(t *testing.T, tag string, in io.Reader, out *string) {
 	var (
 		line string
 		r    = bufio.NewReader(in)
@@ -211,7 +208,7 @@ func copyReaderToBuffer(t *testing.T, in io.Reader, out *string) {
 		*out = *out + string(b)
 
 		if b == byte('\n') {
-			t.Logf("STDOUT | %s", line)
+			t.Logf("%s STDOUT | %s", tag, line)
 			line = ""
 			continue
 		}

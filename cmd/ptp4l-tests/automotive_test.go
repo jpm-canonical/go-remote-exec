@@ -4,7 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"go-remote-exec/pkg/remote"
+	linuxptp "go-remote-exec/pkg/linuxptp-testing"
+	remote "go-remote-exec/pkg/remote-exec"
 )
 
 func TestAutomotive(t *testing.T) {
@@ -13,8 +14,8 @@ func TestAutomotive(t *testing.T) {
 		t.Fatal("REMOTE_PASSWORD environment variable not set")
 	}
 
-	testSetup := TestSetup{
-		Server: HostSetup{
+	testSetup := linuxptp.TestSetup{
+		Server: linuxptp.HostSetup{
 			Hostname:    "raspi-a.lan",
 			Username:    "jpmeijers",
 			Password:    os.Getenv("REMOTE_PASSWORD"),
@@ -25,7 +26,7 @@ func TestAutomotive(t *testing.T) {
 
 			StartedSubstring: "INITIALIZING to MASTER on INIT_COMPLETE",
 		},
-		Client: HostSetup{
+		Client: linuxptp.HostSetup{
 			Hostname:    "raspi-b.lan",
 			Username:    "jpmeijers",
 			Password:    os.Getenv("REMOTE_PASSWORD"),
@@ -38,5 +39,5 @@ func TestAutomotive(t *testing.T) {
 			RequireSyncBelowThreshold: true,
 		},
 	}
-	runTest(t, testSetup)
+	linuxptp.RunTest(t, testSetup)
 }
