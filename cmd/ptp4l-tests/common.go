@@ -3,6 +3,7 @@ package ptp4l_tests
 import (
 	"fmt"
 	"log"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,7 +54,15 @@ func runTest(t *testing.T, testSetup TestSetup) {
 
 	// Append Rpi5 specific arguments
 	if testSetup.Client.SystemType == remote.Rpi5 {
-		clientCommand = append(clientCommand, remote.Rpi5Specific...)
+		clientCommand = append(clientCommand, remote.Ptp4lRpi5Specific...)
+	}
+
+	// Append Snap specific arguments
+	if testSetup.Client.InstallType == remote.Snap {
+		clientCommand = append(clientCommand, remote.Ptp4lSnapSpecific...)
+
+		// Also make sure the directory exists
+		remote.CreatePtp4lSnapUds(t, client)
 	}
 
 	t.Log("# Starting client")
@@ -61,7 +70,7 @@ func runTest(t *testing.T, testSetup TestSetup) {
 	var clientStdErr string
 	runningPtr := remote.ExecuteAsync(t, client, clientCommand, &clientStdOut, &clientStdErr)
 
-	found := remote.WaitFor(runningPtr, &clientStdOut, "INITIALIZING to LISTENING on INIT_COMPLETE", 20*time.Second)
+	found := remote.WaitFor(runningPtr, &clientStdOut, testSetup.Client.StartedSubstring, 20*time.Second)
 	if !found {
 		t.Log(clientStdOut)
 		t.Log(clientStdErr)
@@ -71,8 +80,10 @@ func runTest(t *testing.T, testSetup TestSetup) {
 
 	// Watch client logs for synchronisation with server
 	clientSynchronised := false
+	syncRepeats := 0
+
 	clientStdOutCopy := ""
-	period := 20 * time.Second
+	period := 30 * time.Second
 	endTime := time.Now().Add(period)
 	log.Printf("# Waiting for sync, until %s", endTime)
 
@@ -94,18 +105,22 @@ func runTest(t *testing.T, testSetup TestSetup) {
 					if err != nil {
 						t.Log(err)
 					} else {
-						if masterOffset < remote.PtpSyncThreshold {
-							if !clientSynchronised {
+						if math.Abs(float64(masterOffset)) < remote.PtpSyncThreshold {
+							syncRepeats++
+
+							if syncRepeats >= remote.PtpSyncRepeats {
 								t.Logf("# Client synchronised. Master Offset %snS", fields[3])
+								clientSynchronised = true
+								break
 							}
-							clientSynchronised = true
-							//break
+						} else {
+							syncRepeats = 0
 						}
 					}
 				} else {
 					t.Logf("# Client synchronising. Master Offset %snS", fields[3])
 					clientSynchronised = true
-					//break
+					break
 				}
 			}
 
@@ -119,18 +134,22 @@ func runTest(t *testing.T, testSetup TestSetup) {
 					if err != nil {
 						t.Log(err)
 					} else {
-						if rmsOffset < remote.PtpSyncThreshold {
-							if !clientSynchronised {
+						if math.Abs(float64(rmsOffset)) < remote.PtpSyncThreshold {
+							syncRepeats++
+
+							if syncRepeats >= remote.PtpSyncRepeats {
 								t.Logf("# Client synchronised. RMS Offset %snS", fields[2])
+								clientSynchronised = true
+								break
 							}
-							clientSynchronised = true
-							//break
+						} else {
+							syncRepeats = 0
 						}
 					}
 				} else {
 					t.Logf("# Client synchronising. RMS Offset %snS", fields[2])
 					clientSynchronised = true
-					//break
+					break
 				}
 			}
 		}
@@ -167,7 +186,15 @@ func startServer(t *testing.T, testSetup TestSetup) {
 
 	// Append Rpi5 specific arguments
 	if testSetup.Server.SystemType == remote.Rpi5 {
-		serverCommand = append(serverCommand, remote.Rpi5Specific...)
+		serverCommand = append(serverCommand, remote.Ptp4lRpi5Specific...)
+	}
+
+	// Append Snap specific arguments
+	if testSetup.Server.InstallType == remote.Snap {
+		serverCommand = append(serverCommand, remote.Ptp4lSnapSpecific...)
+
+		// Also make sure the directory exists
+		remote.CreatePtp4lSnapUds(t, server)
 	}
 
 	t.Log("# Starting server")
@@ -175,7 +202,7 @@ func startServer(t *testing.T, testSetup TestSetup) {
 	var serverStdErr string
 	runningPtr := remote.ExecuteAsync(t, server, serverCommand, &serverStdOut, &serverStdErr)
 
-	found := remote.WaitFor(runningPtr, &serverStdOut, "assuming the grand master role", 20*time.Second)
+	found := remote.WaitFor(runningPtr, &serverStdOut, testSetup.Server.StartedSubstring, 20*time.Second)
 	if !found {
 		t.Fatal("# Starting server failed")
 	}

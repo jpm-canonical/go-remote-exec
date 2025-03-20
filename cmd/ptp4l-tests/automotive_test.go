@@ -7,7 +7,7 @@ import (
 	"go-remote-exec/pkg/remote"
 )
 
-func TestDefault(t *testing.T) {
+func TestAutomotive(t *testing.T) {
 	remotePassword := os.Getenv("REMOTE_PASSWORD")
 	if remotePassword == "" {
 		t.Fatal("REMOTE_PASSWORD environment variable not set")
@@ -21,9 +21,9 @@ func TestDefault(t *testing.T) {
 			InstallType: remote.Snap,
 			SystemType:  remote.Rpi5,
 			Interface:   "eth0",
-			ConfigFile:  "../../default-configs-4.4/default.cfg",
+			ConfigFile:  "../../default-configs-4.4/automotive-master.cfg",
 
-			StartedSubstring: "assuming the grand master role",
+			StartedSubstring: "INITIALIZING to MASTER on INIT_COMPLETE",
 		},
 		Client: HostSetup{
 			Hostname:    "raspi-b.lan",
@@ -32,9 +32,9 @@ func TestDefault(t *testing.T) {
 			InstallType: remote.Snap,
 			SystemType:  remote.Rpi5,
 			Interface:   "eth0",
-			ConfigFile:  "../../default-configs-4.4/default.cfg",
+			ConfigFile:  "../../default-configs-4.4/automotive-slave.cfg",
 
-			StartedSubstring:          "INITIALIZING to LISTENING on INIT_COMPLETE",
+			StartedSubstring:          "INITIALIZING to SLAVE on INIT_COMPLETE",
 			RequireSyncBelowThreshold: true,
 		},
 	}

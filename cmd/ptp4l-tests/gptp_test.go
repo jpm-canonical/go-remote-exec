@@ -8,6 +8,11 @@ import (
 )
 
 func TestGptp(t *testing.T) {
+	remotePassword := os.Getenv("REMOTE_PASSWORD")
+	if remotePassword == "" {
+		t.Fatal("REMOTE_PASSWORD environment variable not set")
+	}
+
 	testSetup := TestSetup{
 		Server: HostSetup{
 			Hostname:    "raspi-a.lan",
@@ -18,7 +23,7 @@ func TestGptp(t *testing.T) {
 			Interface:   "eth0",
 			ConfigFile:  "../../default-configs-4.2/gPTP.cfg",
 
-			StartedSubstring: "selected local clock 2ccf67.fffe.1cbba1 as best master",
+			StartedSubstring: "assuming the grand master role",
 		},
 		Client: HostSetup{
 			Hostname:    "raspi-b.lan",
