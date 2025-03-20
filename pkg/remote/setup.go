@@ -52,8 +52,8 @@ func CopyFile(t *testing.T, localFilePath, remoteFilePath string, host *ssh.Clie
 	command := []string{"sudo", "mv", tempHomeDirFileName, remoteFilePath}
 	_, _ = Execute(t, host, command)
 
-	//t.Cleanup(func() {
-	//	command := []string{"sudo", "rm", remoteFilePath}
-	//	_, _ = Execute(t, host, command)
-	//})
+	t.Cleanup(func() {
+		command := []string{"sudo", "rm", remoteFilePath}
+		_, _ = Execute(t, host, command)
+	})
 }

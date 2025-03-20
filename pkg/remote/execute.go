@@ -2,6 +2,7 @@ package remote
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,7 +17,7 @@ func Execute(t *testing.T, host *ssh.Client, commandArgs []string) (string, stri
 
 	command := strings.Join(commandArgs, " ")
 
-	t.Logf("[exec-wait] %s\n", command)
+	t.Logf("[exec-block] %s\n", command)
 
 	// Set sudo to read the password from stdin
 	if strings.HasPrefix(command, "sudo ") {
@@ -67,11 +68,14 @@ func Execute(t *testing.T, host *ssh.Client, commandArgs []string) (string, stri
 	return string(stdoutBuffer), stderrBuffer
 }
 
-func ExecuteAsync(t *testing.T, host *ssh.Client, commandArgs []string, stdoutBuffer *string, stderrBuffer *string) {
+// ExecuteAsync starts a command on the remote host.
+// stdout and stderr are copied to the strings pointed to by the passed in pointers
+// A boolean pointer is returned, of which the value indicates if the process is still running
+func ExecuteAsync(t *testing.T, host *ssh.Client, commandArgs []string, stdoutBuffer *string, stderrBuffer *string) *bool {
 
 	command := strings.Join(commandArgs, " ")
 
-	fmt.Printf("[exec-async] %s\n", command)
+	t.Logf("[exec-async] %s\n", command)
 
 	// Set sudo to read the password from stdin
 	if strings.HasPrefix(command, "sudo ") {
@@ -110,9 +114,27 @@ func ExecuteAsync(t *testing.T, host *ssh.Client, commandArgs []string, stdoutBu
 		t.Fatalf("failed to start session with command '%s': %v", command, err)
 	}
 
+	// Do a session.Wait() and monitor the exit code
+	running := true
+	go monitorAsyncSession(t, session, &running)
+
 	t.Cleanup(func() {
 		closeAsync(t, session)
 	})
+
+	return &running
+}
+
+func monitorAsyncSession(t *testing.T, session *ssh.Session, running *bool) {
+	err := session.Wait()
+	if err != nil {
+		*running = false
+		if errors.Is(err, &ssh.ExitMissingError{}) {
+			t.Fatal("session exited without an exit code")
+		} else {
+			t.Fatal(err)
+		}
+	}
 }
 
 func closeAsync(t *testing.T, session *ssh.Session) {
@@ -158,7 +180,7 @@ func enterSudoPassword(t *testing.T, in io.WriteCloser, out io.Reader, output *s
 		*output = *output + string(b)
 
 		if b == byte('\n') {
-			t.Logf(line)
+			t.Logf("STDERR | %s", line)
 			line = ""
 			continue
 		}
@@ -189,7 +211,7 @@ func copyReaderToBuffer(t *testing.T, in io.Reader, out *string) {
 		*out = *out + string(b)
 
 		if b == byte('\n') {
-			t.Logf(line)
+			t.Logf("STDOUT | %s", line)
 			line = ""
 			continue
 		}

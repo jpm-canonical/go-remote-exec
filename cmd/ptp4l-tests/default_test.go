@@ -7,7 +7,7 @@ import (
 	"go-remote-exec/pkg/remote"
 )
 
-func TestGptp(t *testing.T) {
+func TestDefault(t *testing.T) {
 	testSetup := TestSetup{
 		Server: HostSetup{
 			Hostname:    "raspi-a.lan",
@@ -16,9 +16,9 @@ func TestGptp(t *testing.T) {
 			InstallType: remote.Snap,
 			SystemType:  remote.Rpi5,
 			Interface:   "eth0",
-			ConfigFile:  "../../default-configs-4.2/gPTP.cfg",
+			ConfigFile:  "../../default-configs-4.4/default.cfg",
 
-			StartedSubstring: "selected local clock 2ccf67.fffe.1cbba1 as best master",
+			StartedSubstring: "assuming the grand master role",
 		},
 		Client: HostSetup{
 			Hostname:    "raspi-b.lan",
@@ -27,12 +27,11 @@ func TestGptp(t *testing.T) {
 			InstallType: remote.Snap,
 			SystemType:  remote.Rpi5,
 			Interface:   "eth0",
-			ConfigFile:  "../../default-configs-4.2/gPTP.cfg",
+			ConfigFile:  "../../default-configs-4.4/default.cfg",
 
 			StartedSubstring:          "INITIALIZING to LISTENING on INIT_COMPLETE",
 			RequireSyncBelowThreshold: true,
 		},
 	}
-
 	runTest(t, testSetup)
 }
