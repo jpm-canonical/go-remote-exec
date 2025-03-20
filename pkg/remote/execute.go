@@ -49,7 +49,7 @@ func Execute(t *testing.T, host *ssh.Client, commandArgs []string) (string, stri
 	}
 
 	var stderrBuffer string
-	go enterSudoPassword(stdin, stderr, &stderrBuffer)
+	go enterSudoPassword(t, stdin, stderr, &stderrBuffer)
 
 	if err := session.Start(command); err != nil {
 		t.Fatalf("failed to start session with command '%s': %v", command, err)
@@ -103,22 +103,22 @@ func ExecuteAsync(t *testing.T, host *ssh.Client, commandArgs []string, stdoutBu
 		t.Fatalf("failed to create stderr pipe: %v", err)
 	}
 
-	go enterSudoPassword(stdin, stderr, stderrBuffer)
-	go copyReaderToBuffer(stdout, stdoutBuffer)
+	go enterSudoPassword(t, stdin, stderr, stderrBuffer)
+	go copyReaderToBuffer(t, stdout, stdoutBuffer)
 
 	if err := session.Start(command); err != nil {
 		t.Fatalf("failed to start session with command '%s': %v", command, err)
 	}
 
 	t.Cleanup(func() {
-		closeAsync(session)
+		closeAsync(t, session)
 	})
 }
 
-func closeAsync(session *ssh.Session) {
+func closeAsync(t *testing.T, session *ssh.Session) {
 	err := session.Signal(ssh.SIGTERM)
 	if err != nil {
-		fmt.Printf("failed to send SIGTERM: %v\n", err)
+		t.Logf("Failed to send SIGTERM: %v\n", err)
 	}
 	time.Sleep(1 * time.Second) // Delay is required otherwise the client becomes an orphaned process
 
@@ -128,7 +128,7 @@ func closeAsync(session *ssh.Session) {
 		if err.Error() == "EOF" {
 			// expected error
 		} else {
-			fmt.Printf("failed to send SIGKILL: %v\n", err)
+			t.Logf("Failed to send SIGKILL: %v\n", err)
 		}
 	}
 	err = session.Close()
@@ -136,7 +136,7 @@ func closeAsync(session *ssh.Session) {
 		if err.Error() == "EOF" {
 			// expected error
 		} else {
-			fmt.Printf("failed to close session: %v\n", err)
+			t.Logf("failed to close session: %v\n", err)
 		}
 	}
 	time.Sleep(1 * time.Second) // Delay is required otherwise the client becomes an orphaned process
@@ -144,7 +144,7 @@ func closeAsync(session *ssh.Session) {
 
 // Monitor stderr for the sudo password request, and only pipe it in when it is requested
 // https://stackoverflow.com/a/44501303
-func enterSudoPassword(in io.WriteCloser, out io.Reader, output *string) {
+func enterSudoPassword(t *testing.T, in io.WriteCloser, out io.Reader, output *string) {
 	var (
 		line string
 		r    = bufio.NewReader(out)
@@ -158,6 +158,7 @@ func enterSudoPassword(in io.WriteCloser, out io.Reader, output *string) {
 		*output = *output + string(b)
 
 		if b == byte('\n') {
+			t.Logf(line)
 			line = ""
 			continue
 		}
@@ -165,7 +166,7 @@ func enterSudoPassword(in io.WriteCloser, out io.Reader, output *string) {
 		line += string(b)
 
 		if strings.HasPrefix(line, "[sudo] password for ") && strings.HasSuffix(line, ": ") {
-			fmt.Printf("Remote requested sudo password. Entering.\n")
+			t.Logf("Remote requested sudo password. Entering.\n")
 			_, err = in.Write([]byte(os.Getenv("REMOTE_PASSWORD") + "\n"))
 			if err != nil {
 				break
@@ -174,9 +175,10 @@ func enterSudoPassword(in io.WriteCloser, out io.Reader, output *string) {
 	}
 }
 
-func copyReaderToBuffer(in io.Reader, out *string) {
+func copyReaderToBuffer(t *testing.T, in io.Reader, out *string) {
 	var (
-		r = bufio.NewReader(in)
+		line string
+		r    = bufio.NewReader(in)
 	)
 	for {
 		b, err := r.ReadByte()
@@ -185,5 +187,13 @@ func copyReaderToBuffer(in io.Reader, out *string) {
 		}
 
 		*out = *out + string(b)
+
+		if b == byte('\n') {
+			t.Logf(line)
+			line = ""
+			continue
+		}
+
+		line += string(b)
 	}
 }

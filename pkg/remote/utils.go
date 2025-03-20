@@ -1,46 +1,25 @@
 package remote
 
 import (
-	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 )
 
-func CopyFile(t *testing.T, localFileName, remoteFileName string, host *ssh.Client) {
-	localFile, err := os.Open(localFileName)
-	if err != nil {
-		t.Fatal(err)
+// GetConfigDirectory returns the correct config directory depending on the installation type
+func GetConfigDirectory(t *testing.T, installType InstallType) string {
+	remotePath := ""
+	if installType == Deb {
+		remotePath = "/etc/linuxptp/"
+	} else if installType == Snap {
+		remotePath = "/var/snap/linuxptp/common/"
 	}
-	defer localFile.Close()
-
-	sftpClient, err := sftp.NewClient(host)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sftpClient.Close()
-
-	remoteFile, err := sftpClient.Create(remoteFileName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer remoteFile.Close()
-
-	err = sftpClient.Chmod(remoteFileName, 0777)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = io.Copy(remoteFile, localFile)
-	if err != nil {
-		t.Fatal(err)
-	}
+	return remotePath
 }
 
+// WaitFor reads a buffer searching for a substring.
+// True is returned if and when the substring is found.
+// False is returned if the substring is not found within the timeout duration.
 func WaitFor(buffer *string, search string, timeout time.Duration) bool {
 	start := time.Now()
 

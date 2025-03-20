@@ -12,6 +12,20 @@ const (
 	Version       = "-v"
 	Interface     = "-i"
 
-	Ptp4l     = "ptp4l"
+	Ptp4l     = "/usr/sbin/ptp4l"
 	Ptp4lSnap = "linuxptp.ptp4l"
+)
+
+type InstallType string
+
+const (
+	Deb  InstallType = "deb"
+	Snap InstallType = "snap"
+)
+
+type SystemType string
+
+const (
+	Rpi5    SystemType = "rpi5"
+	Generic SystemType = "generic"
 )
