@@ -29,7 +29,7 @@ func TestAuthentication(t *testing.T) {
 			SystemType:              remote.Rpi5,
 			Interface:               "eth0",
 			ConfigFile:              "../../default-configs-4.4/authentication.cfg",
-			SecurityAssociationFile: &securityAssocFile,
+			SecurityAssociationFile: securityAssocFile,
 
 			StartedSubstring: "assuming the grand master role",
 		},
@@ -41,7 +41,7 @@ func TestAuthentication(t *testing.T) {
 			SystemType:              remote.Rpi5,
 			Interface:               "eth0",
 			ConfigFile:              "../../default-configs-4.4/authentication.cfg",
-			SecurityAssociationFile: &securityAssocFile,
+			SecurityAssociationFile: securityAssocFile,
 
 			StartedSubstring:          "INITIALIZING to LISTENING on INIT_COMPLETE",
 			RequireSyncBelowThreshold: true,

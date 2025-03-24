@@ -1,8 +1,12 @@
 package remote_exec
 
 import (
+	"net"
 	"strings"
+	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // WaitFor reads a buffer searching for a substring.
@@ -20,4 +24,19 @@ func WaitFor(running *bool, buffer *string, search string, timeout time.Duration
 		}
 	}
 	return false
+}
+
+func GetIpV4Address(t *testing.T, tag string, client *ssh.Client, interfaceName string) net.IP {
+	command := []string{
+		"ip -f inet addr show", interfaceName, " | awk '/inet / {print $2}'",
+	}
+	stdout, stderr := Execute(t, tag, client, command)
+	if stderr != "" {
+		t.Error(stderr)
+	}
+	ip, _, err := net.ParseCIDR(strings.TrimSpace(stdout))
+	if err != nil {
+		t.Error(err)
+	}
+	return ip
 }

@@ -95,7 +95,7 @@ func startClient(t *testing.T, config HostSetup) {
 		before, after, completeLine := strings.Cut(clientStdOut, "\n")
 		if completeLine {
 			clientStdOut = after
-			clientStdOutCopy += before // make a copy for printing later
+			clientStdOutCopy += before + "\n" // make a copy for printing later
 
 			fields := strings.Fields(before)
 
