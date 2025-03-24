@@ -20,24 +20,26 @@ func InstallSnap(t *testing.T, tag string, host *ssh.Client) {
 }
 
 func RunTest(t *testing.T, testSetup TestSetup) {
+	startServer(t, testSetup.Server)
+	startClient(t, testSetup.Client)
+}
 
-	startServer(t, testSetup)
-
+func startClient(t *testing.T, config HostSetup) {
 	tag := "client"
 
-	client := remote.Connect(t, tag, testSetup.Client.Hostname, testSetup.Client.Username, testSetup.Client.Password)
+	client := remote.Connect(t, tag, config.Hostname, config.Username, config.Password)
 
 	t.Log("# Copying config to client")
-	clientConfigPath := GetConfigDirectory(t, testSetup.Client.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
-	remote.CopyFile(t, tag, testSetup.Client.ConfigFile, clientConfigPath, client)
+	clientConfigPath := GetConfigDirectory(t, config.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
+	remote.CopyFile(t, tag, config.ConfigFile, clientConfigPath, client)
 
 	application := Ptp4l
-	if testSetup.Client.InstallType == remote.Snap {
+	if config.InstallType == remote.Snap {
 		application = Ptp4lSnap
 	}
 	clientCommand := []string{
 		"sudo", application,
-		Interface, testSetup.Client.Interface,
+		Interface, config.Interface,
 		Verbose, "1",
 		UseSyslog, "0",
 		StepThreshold, "1", // include this to allow quicker syncs by stepping clock
@@ -45,13 +47,20 @@ func RunTest(t *testing.T, testSetup TestSetup) {
 	}
 	clientCommand = append(clientCommand, ClientOnly, "1")
 
+	// If Security Association is set, copy its config file, and add the argument
+	if config.SecurityAssociationFile != "" {
+		secAssocPath := GetConfigDirectory(t, config.InstallType) + fmt.Sprintf("%s-sa-%d.cfg", t.Name(), time.Now().Unix())
+		remote.CopyFile(t, tag, config.SecurityAssociationFile, secAssocPath, client)
+		clientCommand = append(clientCommand, SaFile, secAssocPath)
+	}
+
 	// Append Rpi5 specific arguments
-	if testSetup.Client.SystemType == remote.Rpi5 {
+	if config.SystemType == remote.Rpi5 {
 		clientCommand = append(clientCommand, Ptp4lRpi5Specific...)
 	}
 
 	// Append Snap specific arguments
-	if testSetup.Client.InstallType == remote.Snap {
+	if config.InstallType == remote.Snap {
 		clientCommand = append(clientCommand, Ptp4lSnapSpecific...)
 
 		// Also make sure the directory exists
@@ -63,17 +72,17 @@ func RunTest(t *testing.T, testSetup TestSetup) {
 	var clientStdErr string
 	runningPtr := remote.ExecuteAsync(t, tag, client, clientCommand, &clientStdOut, &clientStdErr)
 
-	found := remote.WaitFor(runningPtr, &clientStdOut, testSetup.Client.StartedSubstring, 20*time.Second)
+	found := remote.WaitFor(runningPtr, &clientStdOut, config.StartedSubstring, 20*time.Second)
 	if !found {
-		t.Log(clientStdOut)
-		t.Log(clientStdErr)
+		t.Logf("%s STDOUT | %s", tag, clientStdOut)
+		t.Logf("%s STDERR | %s", tag, clientStdErr)
 		t.Fatal("# Starting client failed")
 	}
 	t.Log("# Client started")
 
 	// Watch client logs for synchronisation with server
 	clientSynchronising := false
-	clientSyncBelowThres := false
+	clientSyncBelowThreshold := false
 	syncRepeats := 0
 
 	clientStdOutCopy := ""
@@ -94,7 +103,7 @@ func RunTest(t *testing.T, testSetup TestSetup) {
 				ptp4l[247021.552]: master offset      -1968 s0 freq   +7050 path delay     16919
 			*/
 			if fields[1] == "master" && fields[2] == "offset" {
-				if testSetup.Client.RequireSyncBelowThreshold {
+				if config.RequireSyncBelowThreshold {
 					masterOffset, err := strconv.Atoi(fields[3])
 					if err != nil {
 						t.Log(err)
@@ -104,7 +113,7 @@ func RunTest(t *testing.T, testSetup TestSetup) {
 
 							if syncRepeats >= PtpSyncRepeats {
 								t.Logf("# Client synchronised. Master Offset %snS", fields[3])
-								clientSyncBelowThres = true
+								clientSyncBelowThreshold = true
 								break
 							}
 						} else {
@@ -123,7 +132,7 @@ func RunTest(t *testing.T, testSetup TestSetup) {
 				ptp4l[246964.315]: rms    9 max   18 freq  +7052 +/-  12 delay 16909 +/-   0
 			*/
 			if fields[1] == "rms" {
-				if testSetup.Client.RequireSyncBelowThreshold {
+				if config.RequireSyncBelowThreshold {
 					rmsOffset, err := strconv.Atoi(fields[2])
 					if err != nil {
 						t.Log(err)
@@ -133,7 +142,7 @@ func RunTest(t *testing.T, testSetup TestSetup) {
 
 							if syncRepeats >= PtpSyncRepeats {
 								t.Logf("# Client synchronised. RMS Offset %snS", fields[2])
-								clientSyncBelowThres = true
+								clientSyncBelowThreshold = true
 								break
 							}
 						} else {
@@ -149,46 +158,54 @@ func RunTest(t *testing.T, testSetup TestSetup) {
 		}
 	}
 
-	if (testSetup.Client.RequireSyncBelowThreshold && !clientSyncBelowThres) ||
-		(!testSetup.Client.RequireSyncBelowThreshold && !clientSynchronising) {
+	if (config.RequireSyncBelowThreshold && !clientSyncBelowThreshold) ||
+		(!config.RequireSyncBelowThreshold && !clientSynchronising) {
 		t.Log(clientStdOutCopy)
 		t.Log(clientStdErr)
 		t.Fatal("# Synchronisation failed!")
 	}
 }
 
-func startServer(t *testing.T, testSetup TestSetup) {
+func startServer(t *testing.T, config HostSetup) {
 	tag := "server"
 
 	// Connect to two remote devices
-	server := remote.Connect(t, tag, testSetup.Server.Hostname, testSetup.Server.Username, testSetup.Server.Password)
+	server := remote.Connect(t, tag, config.Hostname, config.Username, config.Password)
 
 	t.Log("# Copying config to server")
 	// Use a unique name for the test config file
-	serverConfigPath := GetConfigDirectory(t, testSetup.Server.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
+	serverConfigPath := GetConfigDirectory(t, config.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
 	// Copy config file to both machines
-	remote.CopyFile(t, tag, testSetup.Server.ConfigFile, serverConfigPath, server)
+	remote.CopyFile(t, tag, config.ConfigFile, serverConfigPath, server)
 
+	// Build command
 	application := Ptp4l
-	if testSetup.Server.InstallType == remote.Snap {
+	if config.InstallType == remote.Snap {
 		application = Ptp4lSnap
 	}
 	serverCommand := []string{
 		"sudo", application,
-		Interface, testSetup.Server.Interface,
+		Interface, config.Interface,
 		Verbose, "1",
 		UseSyslog, "0",
 		ConfigFile, serverConfigPath,
 	}
 	serverCommand = append(serverCommand, ServerOnly, "1")
 
+	// If Security Association is set, copy its config file, and add the argument
+	if config.SecurityAssociationFile != "" {
+		secAssocPath := GetConfigDirectory(t, config.InstallType) + fmt.Sprintf("%s-sa-%d.cfg", t.Name(), time.Now().Unix())
+		remote.CopyFile(t, tag, config.SecurityAssociationFile, secAssocPath, server)
+		serverCommand = append(serverCommand, SaFile, secAssocPath)
+	}
+
 	// Append Rpi5 specific arguments
-	if testSetup.Server.SystemType == remote.Rpi5 {
+	if config.SystemType == remote.Rpi5 {
 		serverCommand = append(serverCommand, Ptp4lRpi5Specific...)
 	}
 
 	// Append Snap specific arguments
-	if testSetup.Server.InstallType == remote.Snap {
+	if config.InstallType == remote.Snap {
 		serverCommand = append(serverCommand, Ptp4lSnapSpecific...)
 
 		// Also make sure the directory exists
@@ -200,7 +217,7 @@ func startServer(t *testing.T, testSetup TestSetup) {
 	var serverStdErr string
 	runningPtr := remote.ExecuteAsync(t, tag, server, serverCommand, &serverStdOut, &serverStdErr)
 
-	found := remote.WaitFor(runningPtr, &serverStdOut, testSetup.Server.StartedSubstring, 20*time.Second)
+	found := remote.WaitFor(runningPtr, &serverStdOut, config.StartedSubstring, 20*time.Second)
 	if !found {
 		t.Fatal("# Starting server failed")
 	}

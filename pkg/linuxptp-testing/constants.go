@@ -17,7 +17,8 @@ const (
 	NeighborPropagationDelayThreshold = "--neighborPropDelayThresh"
 	UdsAddress                        = "--uds_address"
 	UdsRoAddress                      = "--uds_ro_address"
-
+	SaFile                            = "--sa_file"
+	
 	// LinuxPTP applications
 	Ptp4l     = "/usr/sbin/ptp4l"
 	Ptp4lSnap = "linuxptp.ptp4l"

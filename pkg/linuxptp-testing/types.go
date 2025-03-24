@@ -8,13 +8,14 @@ type TestSetup struct {
 }
 
 type HostSetup struct {
-	Hostname    string
-	Username    string
-	Password    string
-	InstallType remote.InstallType
-	SystemType  remote.SystemType
-	Interface   string
-	ConfigFile  string
+	Hostname                string
+	Username                string
+	Password                string
+	InstallType             remote.InstallType
+	SystemType              remote.SystemType
+	Interface               string
+	ConfigFile              string
+	SecurityAssociationFile string
 
 	StartedSubstring          string
 	RequireSyncBelowThreshold bool

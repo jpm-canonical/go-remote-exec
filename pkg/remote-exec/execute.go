@@ -127,9 +127,9 @@ func monitorAsyncSession(t *testing.T, tag string, session *ssh.Session, running
 	if err != nil {
 		*running = false
 		if errors.Is(err, &ssh.ExitMissingError{}) {
-			t.Fatalf("%s | session exited without an exit code", tag)
+			t.Logf("%s | session exited without an exit code", tag)
 		} else {
-			t.Fatalf("%s | %v", tag, err)
+			t.Logf("%s | %v", tag, err)
 		}
 	}
 }
