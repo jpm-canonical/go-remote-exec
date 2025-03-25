@@ -1,7 +1,6 @@
 package linuxptp_testing
 
 import (
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -12,62 +11,37 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func InstallSnap(t *testing.T, tag string, host *ssh.Client) {
-	command := []string{"sudo", "snap", "install", "linuxptp", "--beta"}
-	stdout, stderr := remote.Execute(t, tag, host, command)
-	fmt.Printf("===stdout===\n%s============\n", stdout)
-	fmt.Printf("===stderr===\n%s============\n", stderr)
-}
-
 func RunTest(t *testing.T, testSetup TestSetup) {
-	startServer(t, testSetup.Server)
-	startClient(t, testSetup.Client)
+	serverTag := "server"
+	clientTag := "client"
+
+	// Connect to remote devices
+	server := remote.Connect(t, serverTag, testSetup.Server.Hostname, testSetup.Server.Username, testSetup.Server.Password)
+	client := remote.Connect(t, clientTag, testSetup.Client.Hostname, testSetup.Client.Username, testSetup.Client.Password)
+
+	if testSetup.AddUnicastTable {
+		serverIp := findIpAddress(t, serverTag, testSetup.Server, server)
+		clientIp := findIpAddress(t, clientTag, testSetup.Client, client)
+
+		// For unicast comms, client gets server IP, server gets client IP
+		testSetup.Client.ConfigFile = appendUnicast(t, testSetup.Client.ConfigFile, testSetup.Client.Interface, serverIp)
+		testSetup.Server.ConfigFile = appendUnicast(t, testSetup.Server.ConfigFile, testSetup.Server.Interface, clientIp)
+	}
+
+	startServer(t, serverTag, testSetup.Server, server)
+	startClient(t, clientTag, testSetup.Client, client)
 }
 
-func startClient(t *testing.T, config HostSetup) {
-	tag := "client"
+func startClient(t *testing.T, tag string, config HostSetup, client *ssh.Client) {
+	t.Logf("%s | Copying config", tag)
+	serverConfigPath := putConfigFile(t, tag, config, client)
 
-	client := remote.Connect(t, tag, config.Hostname, config.Username, config.Password)
-
-	t.Log("# Copying config to client")
-	clientConfigPath := GetConfigDirectory(t, config.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
-	remote.CopyFile(t, tag, config.ConfigFile, clientConfigPath, client)
-
-	application := Ptp4l
-	if config.InstallType == remote.Snap {
-		application = Ptp4lSnap
-	}
-	clientCommand := []string{
-		"sudo", application,
-		Interface, config.Interface,
-		Verbose, "1",
-		UseSyslog, "0",
-		StepThreshold, "1", // include this to allow quicker syncs by stepping clock
-		ConfigFile, clientConfigPath,
-	}
+	// Build command
+	clientCommand := buildCommand(t, tag, config, serverConfigPath)
+	clientCommand = append(clientCommand, configureSecurityAssociation(t, tag, config, client)...)
 	clientCommand = append(clientCommand, ClientOnly, "1")
 
-	// If Security Association is set, copy its config file, and add the argument
-	if config.SecurityAssociationFile != "" {
-		secAssocPath := GetConfigDirectory(t, config.InstallType) + fmt.Sprintf("%s-sa-%d.cfg", t.Name(), time.Now().Unix())
-		remote.CopyFile(t, tag, config.SecurityAssociationFile, secAssocPath, client)
-		clientCommand = append(clientCommand, SaFile, secAssocPath)
-	}
-
-	// Append Rpi5 specific arguments
-	if config.SystemType == remote.Rpi5 {
-		clientCommand = append(clientCommand, Ptp4lRpi5Specific...)
-	}
-
-	// Append Snap specific arguments
-	if config.InstallType == remote.Snap {
-		clientCommand = append(clientCommand, Ptp4lSnapSpecific...)
-
-		// Also make sure the directory exists
-		CreatePtp4lSnapUds(t, client)
-	}
-
-	t.Log("# Starting client")
+	t.Logf("%s | Starting", tag)
 	var clientStdOut string
 	var clientStdErr string
 	runningPtr := remote.ExecuteAsync(t, tag, client, clientCommand, &clientStdOut, &clientStdErr)
@@ -76,9 +50,9 @@ func startClient(t *testing.T, config HostSetup) {
 	if !found {
 		t.Logf("%s STDOUT | %s", tag, clientStdOut)
 		t.Logf("%s STDERR | %s", tag, clientStdErr)
-		t.Fatal("# Starting client failed")
+		t.Fatalf("%s | Startup failed", tag)
 	}
-	t.Log("# Client started")
+	t.Logf("%s | Started", tag)
 
 	// Watch client logs for synchronisation with server
 	clientSynchronising := false
@@ -88,7 +62,7 @@ func startClient(t *testing.T, config HostSetup) {
 	clientStdOutCopy := ""
 	period := 30 * time.Second
 	endTime := time.Now().Add(period)
-	t.Logf("# Waiting for sync, until %s", endTime)
+	t.Logf("%s | Waiting for sync, until %s", tag, endTime)
 
 	// Monitor Client's stdout, split into lines, and check for sync message
 	for time.Now().Before(endTime) {
@@ -112,7 +86,7 @@ func startClient(t *testing.T, config HostSetup) {
 							syncRepeats++
 
 							if syncRepeats >= PtpSyncRepeats {
-								t.Logf("# Client synchronised. Master Offset %snS", fields[3])
+								t.Logf("%s | Synchronised. Master Offset %snS", tag, fields[3])
 								clientSyncBelowThreshold = true
 								break
 							}
@@ -121,7 +95,7 @@ func startClient(t *testing.T, config HostSetup) {
 						}
 					}
 				} else {
-					t.Logf("# Client synchronising. Master Offset %snS", fields[3])
+					t.Logf("%s | Synchronising. Master Offset %snS", tag, fields[3])
 					clientSynchronising = true
 					break
 				}
@@ -141,7 +115,7 @@ func startClient(t *testing.T, config HostSetup) {
 							syncRepeats++
 
 							if syncRepeats >= PtpSyncRepeats {
-								t.Logf("# Client synchronised. RMS Offset %snS", fields[2])
+								t.Logf("%s | Synchronised. RMS Offset %snS", tag, fields[2])
 								clientSyncBelowThreshold = true
 								break
 							}
@@ -150,7 +124,7 @@ func startClient(t *testing.T, config HostSetup) {
 						}
 					}
 				} else {
-					t.Logf("# Client synchronising. RMS Offset %snS", fields[2])
+					t.Logf("%s | Synchronising. RMS Offset %snS", tag, fields[2])
 					clientSynchronising = true
 					break
 				}
@@ -162,64 +136,27 @@ func startClient(t *testing.T, config HostSetup) {
 		(!config.RequireSyncBelowThreshold && !clientSynchronising) {
 		t.Log(clientStdOutCopy)
 		t.Log(clientStdErr)
-		t.Fatal("# Synchronisation failed!")
+		t.Fatalf("%s | Synchronisation failed!", tag)
 	}
 }
 
-func startServer(t *testing.T, config HostSetup) {
-	tag := "server"
-
-	// Connect to two remote devices
-	server := remote.Connect(t, tag, config.Hostname, config.Username, config.Password)
-
-	t.Log("# Copying config to server")
-	// Use a unique name for the test config file
-	serverConfigPath := GetConfigDirectory(t, config.InstallType) + fmt.Sprintf("%s-%d.cfg", t.Name(), time.Now().Unix())
-	// Copy config file to both machines
-	remote.CopyFile(t, tag, config.ConfigFile, serverConfigPath, server)
+func startServer(t *testing.T, tag string, config HostSetup, server *ssh.Client) {
+	t.Logf("%s | Copying config", tag)
+	serverConfigPath := putConfigFile(t, tag, config, server)
 
 	// Build command
-	application := Ptp4l
-	if config.InstallType == remote.Snap {
-		application = Ptp4lSnap
-	}
-	serverCommand := []string{
-		"sudo", application,
-		Interface, config.Interface,
-		Verbose, "1",
-		UseSyslog, "0",
-		ConfigFile, serverConfigPath,
-	}
+	serverCommand := buildCommand(t, tag, config, serverConfigPath)
+	serverCommand = append(serverCommand, configureSecurityAssociation(t, tag, config, server)...)
 	serverCommand = append(serverCommand, ServerOnly, "1")
 
-	// If Security Association is set, copy its config file, and add the argument
-	if config.SecurityAssociationFile != "" {
-		secAssocPath := GetConfigDirectory(t, config.InstallType) + fmt.Sprintf("%s-sa-%d.cfg", t.Name(), time.Now().Unix())
-		remote.CopyFile(t, tag, config.SecurityAssociationFile, secAssocPath, server)
-		serverCommand = append(serverCommand, SaFile, secAssocPath)
-	}
-
-	// Append Rpi5 specific arguments
-	if config.SystemType == remote.Rpi5 {
-		serverCommand = append(serverCommand, Ptp4lRpi5Specific...)
-	}
-
-	// Append Snap specific arguments
-	if config.InstallType == remote.Snap {
-		serverCommand = append(serverCommand, Ptp4lSnapSpecific...)
-
-		// Also make sure the directory exists
-		CreatePtp4lSnapUds(t, server)
-	}
-
-	t.Log("# Starting server")
+	t.Logf("%s | Starting", tag)
 	var serverStdOut string
 	var serverStdErr string
 	runningPtr := remote.ExecuteAsync(t, tag, server, serverCommand, &serverStdOut, &serverStdErr)
 
 	found := remote.WaitFor(runningPtr, &serverStdOut, config.StartedSubstring, 20*time.Second)
 	if !found {
-		t.Fatal("# Starting server failed")
+		t.Fatalf("%s | Startup failed", tag)
 	}
-	t.Log("# Server started")
+	t.Logf("%s | Started", tag)
 }

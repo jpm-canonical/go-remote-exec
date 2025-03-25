@@ -3,8 +3,9 @@ package linuxptp_testing
 import remote "go-remote-exec/pkg/remote-exec"
 
 type TestSetup struct {
-	Server HostSetup
-	Client HostSetup
+	Server          HostSetup
+	Client          HostSetup
+	AddUnicastTable bool // default is false
 }
 
 type HostSetup struct {
