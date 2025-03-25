@@ -13,7 +13,6 @@ import (
 
 /*
 TestG8265_1 runs a test using the G.8265.1 telecoms profile.
-This test does not currently work, as the config file needs to be edited to point to the unicast IP address of the remote host.
 */
 func TestG8265_1(t *testing.T) {
 	remotePassword := os.Getenv("REMOTE_PASSWORD")
