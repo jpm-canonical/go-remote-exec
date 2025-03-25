@@ -11,8 +11,8 @@ import (
 )
 
 // CopyFile copies a file from the local machine to the remote host.
-// It is first copies to the home directory, then moves it to the final path using sudo.
-// The test cleanup will remove the file.
+// It is first copied to the home directory, then moved to the final path using sudo.
+// The test cleanup deletes the file.
 func CopyFile(t *testing.T, tag string, localFilePath, remoteFilePath string, host *ssh.Client) {
 	localFile, err := os.Open(localFilePath)
 	if err != nil {
