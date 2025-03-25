@@ -19,14 +19,7 @@ func RunTest(t *testing.T, testSetup TestSetup) {
 	server := remote.Connect(t, serverTag, testSetup.Server.Hostname, testSetup.Server.Username, testSetup.Server.Password)
 	client := remote.Connect(t, clientTag, testSetup.Client.Hostname, testSetup.Client.Username, testSetup.Client.Password)
 
-	if testSetup.AddUnicastTable {
-		serverIp := findIpAddress(t, serverTag, testSetup.Server, server)
-		clientIp := findIpAddress(t, clientTag, testSetup.Client, client)
-
-		// For unicast comms, client gets server IP, server gets client IP
-		testSetup.Client.ConfigFile = appendUnicast(t, testSetup.Client.ConfigFile, testSetup.Client.Interface, serverIp)
-		testSetup.Server.ConfigFile = appendUnicast(t, testSetup.Server.ConfigFile, testSetup.Server.Interface, clientIp)
-	}
+	testSetup = addUnicastConfig(t, "unicast", testSetup, server, client)
 
 	startServer(t, serverTag, testSetup.Server, server)
 	startClient(t, clientTag, testSetup.Client, client)

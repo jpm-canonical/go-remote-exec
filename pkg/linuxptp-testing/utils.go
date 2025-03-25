@@ -68,47 +68,161 @@ func putConfigFile(t *testing.T, tag string, config HostSetup, host *ssh.Client)
 	return remoteConfigPath
 }
 
-func findIpAddress(t *testing.T, tag string, hostSetup HostSetup, host *ssh.Client) net.IP {
-	interfaceIp := remote.GetIpV4Address(t, tag, host, hostSetup.Interface)
-	return interfaceIp
+func addUnicastConfig(t *testing.T, tag string, testSetup TestSetup, server *ssh.Client, client *ssh.Client) TestSetup {
+	if !testSetup.Server.AddUnicastTable && !testSetup.Client.AddUnicastTable {
+		return testSetup
+	}
+
+	// For unicast comms, server gets client address, client gets server address
+
+	if testSetup.Server.AddUnicastTable {
+		switch testSetup.Server.UnicastTransport {
+		case L2:
+			clientMac, err := remote.GetMacAddress(t, tag, client, testSetup.Client.Interface)
+			if err != nil {
+				t.Fatalf("Can't find client MAC: %s", err)
+			}
+			testSetup.Server.ConfigFile = appendUnicastL2(t, testSetup.Server.ConfigFile, testSetup.Server.Interface, clientMac)
+		case UDPv4:
+			clientIPv4, err := remote.GetIPv4Address(t, tag, client, testSetup.Client.Interface)
+			if err != nil {
+				t.Fatalf("Can't find client IPv4: %s", err)
+			}
+			testSetup.Server.ConfigFile = appendUnicastUDPv4(t, testSetup.Server.ConfigFile, testSetup.Server.Interface, clientIPv4)
+		case UDPv6:
+			clientIPv6, err := remote.GetIPv6GlobalAddress(t, tag, client, testSetup.Client.Interface)
+			if err != nil {
+				t.Logf("Can't find client global IPv6: %s", err)
+				// If no global IPv6 exists, fall back to link local address
+				clientIPv6, err = remote.GetIPv6LocalAddress(t, tag, client, testSetup.Client.Interface)
+				if err != nil {
+					t.Fatalf("Can't find client link local IPv6: %s", err)
+				}
+			}
+			testSetup.Server.ConfigFile = appendUnicastUDPv6(t, testSetup.Server.ConfigFile, testSetup.Server.Interface, clientIPv6)
+		}
+
+	}
+
+	if testSetup.Client.AddUnicastTable {
+		switch testSetup.Client.UnicastTransport {
+		case L2:
+			serverMac, err := remote.GetMacAddress(t, tag, server, testSetup.Server.Interface)
+			if err != nil {
+				t.Fatalf("Can't find server MAC: %s", err)
+			}
+			testSetup.Client.ConfigFile = appendUnicastL2(t, testSetup.Client.ConfigFile, testSetup.Client.Interface, serverMac)
+		case UDPv4:
+			serverIPv4, err := remote.GetIPv4Address(t, tag, server, testSetup.Server.Interface)
+			if err != nil {
+				t.Fatalf("Can't find server IPv4: %s", err)
+			}
+			testSetup.Client.ConfigFile = appendUnicastUDPv4(t, testSetup.Client.ConfigFile, testSetup.Client.Interface, serverIPv4)
+		case UDPv6:
+			serverIPv6, err := remote.GetIPv6GlobalAddress(t, tag, server, testSetup.Server.Interface)
+			if err != nil {
+				t.Logf("Can't find server global IPv6: %s", err)
+				// If no global IPv6 exists, fall back to link local address
+				serverIPv6, err = remote.GetIPv6LocalAddress(t, tag, server, testSetup.Server.Interface)
+				if err != nil {
+					t.Fatalf("Can't find server link local IPv6: %s", err)
+				}
+			}
+			testSetup.Client.ConfigFile = appendUnicastUDPv6(t, testSetup.Client.ConfigFile, testSetup.Client.Interface, serverIPv6)
+		}
+	}
+
+	// Return a copy of the test setup with the unicast configs added
+	return testSetup
 }
 
-func appendUnicast(t *testing.T, baseConfigFile string, interfaceName string, remoteIp net.IP) string {
-	genericConfigFile, err := os.Open(baseConfigFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	genericConfig, err := io.ReadAll(genericConfigFile)
-	if err != nil {
-		t.Fatal(err)
-	}
+func appendUnicastL2(t *testing.T, originalConfigFilePath string, interfaceName string, mac string) string {
 
-	configFormatString := `%[1]s
+	configFormatString := `
 [unicast_master_table]
 table_id			1
-logQueryInterval		2
-UDPv4				%[2]s
+logQueryInterval	2
+L2					%[1]s
 
-[%[3]s]
-unicast_master_table		1
+[%[2]s]
+unicast_master_table	1
 `
 
-	hostConfig := fmt.Sprintf(configFormatString, genericConfig, remoteIp, interfaceName)
-	hostConfigFile, err := os.CreateTemp("", fmt.Sprintf("%s-server-*.cfg", t.Name()))
+	unicastConfig := fmt.Sprintf(configFormatString, mac, interfaceName)
+	return appendUnicastToConfigFile(t, originalConfigFilePath, unicastConfig)
+}
+
+func appendUnicastUDPv4(t *testing.T, originalConfigFilePath string, interfaceName string, remoteIp net.IP) string {
+
+	configFormatString := `
+[unicast_master_table]
+table_id			1
+logQueryInterval	2
+UDPv4				%[1]s
+
+[%[2]s]
+unicast_master_table	1
+`
+
+	unicastConfig := fmt.Sprintf(configFormatString, remoteIp, interfaceName)
+	return appendUnicastToConfigFile(t, originalConfigFilePath, unicastConfig)
+}
+
+func appendUnicastUDPv6(t *testing.T, originalConfigFilePath string, interfaceName string, remoteIp net.IP) string {
+
+	configFormatString := `
+[unicast_master_table]
+table_id			1
+logQueryInterval	2
+UDPv6				%[1]s
+
+[%[2]s]
+unicast_master_table	1
+`
+
+	unicastConfig := fmt.Sprintf(configFormatString, remoteIp, interfaceName)
+	return appendUnicastToConfigFile(t, originalConfigFilePath, unicastConfig)
+}
+
+/*
+appendUnicastToConfigFile reads the original config file, appends the unicast config to it, and then writes it out to a temp file
+The path to the temp file is returned.
+*/
+func appendUnicastToConfigFile(t *testing.T, originalConfigFilePath string, unicastConfig string) string {
+	// Read original config file
+	originalConfigFile, err := os.Open(originalConfigFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalConfig, err := io.ReadAll(originalConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create temp file for new config, and queue it to be deleted after test run
+	newConfigFile, err := os.CreateTemp("", fmt.Sprintf("%s-server-*.cfg", t.Name()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		os.Remove(hostConfigFile.Name())
+		os.Remove(newConfigFile.Name())
 	})
-	_, err = hostConfigFile.Write([]byte(hostConfig))
+
+	// First write original config
+	_, err = newConfigFile.Write(originalConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = hostConfigFile.Close()
+	// Then append unicast config
+	_, err = newConfigFile.Write([]byte(unicastConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return hostConfigFile.Name()
+	err = newConfigFile.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return newConfigFile.Name()
 }

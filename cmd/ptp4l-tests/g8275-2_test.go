@@ -27,6 +27,9 @@ func TestG8275_2(t *testing.T) {
 			Interface:   "eth0",
 			ConfigFile:  "../../default-configs-4.4/G.8275.2.cfg",
 
+			AddUnicastTable:  true,
+			UnicastTransport: linuxptp.UDPv4,
+
 			StartedSubstring: "assuming the grand master role",
 		},
 		Client: linuxptp.HostSetup{
@@ -38,10 +41,12 @@ func TestG8275_2(t *testing.T) {
 			Interface:   "eth0",
 			ConfigFile:  "../../default-configs-4.4/G.8275.2.cfg",
 
+			AddUnicastTable:  true,
+			UnicastTransport: linuxptp.UDPv4,
+
 			StartedSubstring:          "INITIALIZING to LISTENING on INIT_COMPLETE",
 			RequireSyncBelowThreshold: true,
 		},
-		AddUnicastTable: true,
 	}
 
 	linuxptp.RunTest(t, testSetup)
